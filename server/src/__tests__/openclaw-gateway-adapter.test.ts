@@ -570,6 +570,56 @@ describe("openclaw gateway adapter execute", () => {
       await gateway.close();
     }
   });
+
+  it("emits redacted runtime auth diagnostics for gateway runs", async () => {
+    const gateway = await createMockGatewayServer();
+    try {
+      const logs: string[] = [];
+      const metaEvents: Array<Record<string, unknown>> = [];
+      const result = await execute(
+        buildContext(
+          {
+            url: gateway.url,
+            payloadTemplate: {
+              message: "wake now",
+            },
+            waitTimeoutMs: 2000,
+          },
+          {
+            onLog: async (_stream, chunk) => {
+              logs.push(String(chunk));
+            },
+            onMeta: async (meta) => {
+              metaEvents.push(meta as Record<string, unknown>);
+            },
+          },
+        ),
+      );
+
+      expect(result.exitCode).toBe(0);
+      const runtimeTrace = logs.find((entry) => entry.includes("runtime auth trace:"));
+      expect(runtimeTrace).toBeTruthy();
+      expect(runtimeTrace).toContain('"hasRuntimeAuthToken":true');
+      expect(runtimeTrace).toContain('"hasAuthToken":true');
+      expect(runtimeTrace).toContain('"authTokenSha256":"');
+      expect(runtimeTrace).not.toContain("test-auth-token");
+
+      expect(metaEvents).toHaveLength(1);
+      expect(metaEvents[0]).toMatchObject({
+        adapterType: "openclaw_gateway",
+        authDebug: expect.objectContaining({
+          runId: "run-123",
+          expectedAgentId: "agent-123",
+          payloadAgentId: null,
+          runtimePaperclipAgentId: "agent-123",
+          authTokenSha256: expect.any(String),
+          wakeReason: "issue_assigned",
+        }),
+      });
+    } finally {
+      await gateway.close();
+    }
+  });
   it("fails fast for issue-bound runs when runtime auth token is missing", async () => {
     const gateway = await createMockGatewayServer();
     try {

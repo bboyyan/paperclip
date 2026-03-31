@@ -1066,7 +1066,31 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const templateMessage = nonEmpty(payloadTemplate.message) ?? nonEmpty(payloadTemplate.text);
   const message = templateMessage ? appendWakeText(templateMessage, wakeText) : wakeText;
   const paperclipPayload = buildStandardPaperclipPayload(ctx, wakePayload, paperclipEnv, payloadTemplate);
+  const runtimeAuth: Record<string, unknown> = {
+    apiUrl: paperclipEnv.PAPERCLIP_API_URL ?? null,
+    runId: paperclipEnv.PAPERCLIP_RUN_ID ?? null,
+    agentId: paperclipEnv.PAPERCLIP_AGENT_ID ?? null,
+    companyId: paperclipEnv.PAPERCLIP_COMPANY_ID ?? null,
+    hasAuthToken: Boolean(ctx.authToken),
+    authTokenSha256: ctx.authToken ? sha256Prefix(ctx.authToken) : null,
+    authScheme: ctx.authToken ? "bearer" : null,
+  };
   const issueBoundRun = Boolean(wakePayload.issueId || wakePayload.taskId || wakePayload.issueIds.length > 0);
+  await ctx.onLog(
+    "stdout",
+    `[openclaw-gateway] runtime auth trace: ${stringifyForLog(redactForLog({
+      runId: ctx.runId,
+      issueBoundRun,
+      issueId: wakePayload.issueId,
+      taskId: wakePayload.taskId,
+      linkedIssueIds: wakePayload.issueIds,
+      hasRuntimeAuthToken: Boolean(ctx.authToken),
+      runtimeAuth,
+      sessionKeyStrategy,
+      sessionKey,
+      configuredModel: nonEmpty(ctx.config.model),
+    }), 8_000)}\n`,
+  );
   if (issueBoundRun && !ctx.authToken) {
     await ctx.onLog(
       "stderr",
@@ -1104,12 +1128,28 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     agentParams.timeout = waitTimeoutMs;
   }
 
+  const runtimePaperclipAgentId = nonEmpty(paperclipEnv.PAPERCLIP_AGENT_ID);
+  const runtimePaperclipAuthHeader = nonEmpty(paperclipEnv.PAPERCLIP_AUTH_HEADER);
+  const runtimePaperclipApiKey = nonEmpty(paperclipEnv.PAPERCLIP_API_KEY);
+
   if (ctx.onMeta) {
     await ctx.onMeta({
       adapterType: "openclaw_gateway",
       command: "gateway",
       commandArgs: ["ws", parsedUrl.toString(), "agent"],
       context: ctx.context,
+      authDebug: {
+        runId: ctx.runId,
+        expectedAgentId: ctx.agent.id,
+        contextAgentId: nonEmpty(ctx.context.agentId),
+        payloadAgentId: nonEmpty(agentParams.agentId),
+        runtimePaperclipAgentId,
+        runtimePaperclipAuthHeaderSha256: runtimePaperclipAuthHeader ? sha256Prefix(runtimePaperclipAuthHeader) : null,
+        runtimePaperclipApiKeySha256: runtimePaperclipApiKey ? sha256Prefix(runtimePaperclipApiKey) : null,
+        authTokenSha256: ctx.authToken ? sha256Prefix(ctx.authToken) : null,
+        wakeReason: nonEmpty(wakePayload.wakeReason),
+        wakeCommentId: nonEmpty(wakePayload.wakeCommentId),
+      },
     });
   }
 
